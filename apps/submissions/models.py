@@ -130,29 +130,82 @@ class Score(models.Model):
             points_possible=self.points_possible,
         ))
 
+    @property
+    def is_reset_score(self):
+        """
+        Check whether this is a "reset" score.
+
+        By convention, a "reset" score is a score with a null submission.
+        This indicates that an instructor has reset the student's score,
+        and only scores created after this score should be used
+        to determine the student's effective score.
+
+        Returns:
+            bool
+
+        """
+        return self.submission is None
+
+    @classmethod
+    def create_reset_score(cls, student_item):
+        """
+        Create a "reset" score (a score with a null submission).
+
+        Only scores created after the most recent "reset" score
+        should be used to determine a student's effective score.
+
+        Args:
+            student_item (StudentItem): The student item model.
+
+        Returns:
+            Score: The newly created "reset" score.
+
+        Raises:
+            DatabaseError: An error occurred while creating the score
+
+        """
+        return cls.objects.create(student_item=student_item, submission=None)
+
 
 class ScoreSummary(models.Model):
     """Running store of the highest and most recent Scores for a StudentItem."""
     student_item = models.ForeignKey(StudentItem, unique=True)
-    highest = models.ForeignKey(Score, related_name="+")
+
+    # Highest score can be null if scores have been reset.
+    # Latest score is never null, but it may be a "reset" score.
+    highest = models.ForeignKey(Score, related_name="+", null=True)
     latest = models.ForeignKey(Score, related_name="+")
 
     @receiver(post_save, sender=Score)
     def update_score_summary(sender, **kwargs):
-        """Listen for new Scores and update the relevant ScoreSummary."""
+        """
+        Listen for new Scores and update the relevant ScoreSummary.
+
+        Args:
+            sender: not used
+
+        Kwargs:
+            instance (Score): The score model whose save triggered this receiver.
+
+        """
         score = kwargs['instance']
         try:
             score_summary = ScoreSummary.objects.get(
                 student_item=score.student_item
             )
             score_summary.latest = score
-            if score.to_float() > score_summary.highest.to_float():
+            if score.is_reset_score:
+                score_summary.highest = None
+            elif score_summary.highest is None:
+                score_summary.highest = score
+            elif score.to_float() > score_summary.highest.to_float():
                 score_summary.highest = score
             score_summary.save()
         except ScoreSummary.DoesNotExist:
+            highest = score if not score.is_reset_score else None
             ScoreSummary.objects.create(
                 student_item=score.student_item,
-                highest=score,
+                highest=highest,
                 latest=score,
             )
         except DatabaseError as err:

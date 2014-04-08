@@ -3,7 +3,7 @@ Tests for submission models.
 """
 
 from django.test import TestCase
-from submissions.models import Score, ScoreSummary, StudentItem
+from submissions.models import Submission, Score, ScoreSummary, StudentItem
 
 
 class TestScoreSummary(TestCase):
@@ -40,10 +40,14 @@ class TestScoreSummary(TestCase):
             item_id="i4x://mycourse/special_presentation"
         )
 
+        # We need to attach the score to a submission
+        # so it is not interpreted as a "reset" score
+        submission = Submission.objects.create(student_item=item, attempt_number=1)
+
         # Low score is higher than no score...
         low_score = Score.objects.create(
             student_item=item,
-            submission=None,
+            submission=submission,
             points_earned=0,
             points_possible=0,
         )
@@ -55,7 +59,7 @@ class TestScoreSummary(TestCase):
         # Medium score should supplant low score
         med_score = Score.objects.create(
             student_item=item,
-            submission=None,
+            submission=submission,
             points_earned=8,
             points_possible=10,
         )
@@ -68,7 +72,7 @@ class TestScoreSummary(TestCase):
         # should win because it's 4/4 as opposed to 8/10.
         high_score = Score.objects.create(
             student_item=item,
-            submission=None,
+            submission=submission,
             points_earned=4,
             points_possible=4,
         )
@@ -80,7 +84,7 @@ class TestScoreSummary(TestCase):
         # Put another medium score to make sure it doesn't get set back down
         med_score2 = Score.objects.create(
             student_item=item,
-            submission=None,
+            submission=submission,
             points_earned=5,
             points_possible=10,
         )
@@ -92,3 +96,31 @@ class TestScoreSummary(TestCase):
             med_score2,
             ScoreSummary.objects.get(student_item=item).latest
         )
+
+    def test_reset_score_highest(self):
+        item = StudentItem.objects.create(
+            student_id="score_test_student",
+            course_id="score_test_course",
+            item_id="i4x://mycourse/special_presentation"
+        )
+
+        # Reset score with no score
+        Score.create_reset_score(item)
+        highest = ScoreSummary.objects.get(student_item=item).highest
+        self.assertIs(highest, None)
+
+        # Non-reset score after a reset score
+        submission = Submission.objects.create(student_item=item, attempt_number=1)
+        score = Score.objects.create(
+            student_item=item,
+            submission=submission,
+            points_earned=2,
+            points_possible=3,
+        )
+        highest = ScoreSummary.objects.get(student_item=item).highest
+        self.assertEqual(highest, score)
+
+        # Reset score after a non-reset score
+        Score.create_reset_score(item)
+        highest = ScoreSummary.objects.get(student_item=item).highest
+        self.assertIs(highest, None)
